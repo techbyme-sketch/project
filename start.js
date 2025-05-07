@@ -2,7 +2,7 @@ const { makeWASocket, useSingleFileAuthState, fetchLatestBaileysVersion } = requ
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 
-const TELEGRAM_BOT_TOKEN = 'TON_TELEGRAM_BOT_TOKEN'; // Remplace par ton token Telegram
+const TELEGRAM_BOT_TOKEN = '7947636670:AAHfdl2FS_OXusQOAHK6M9OaNB08UihL_sI'; // Remplace par ton token Telegram
 const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
 const { state, saveState } = useSingleFileAuthState('./session.json');
