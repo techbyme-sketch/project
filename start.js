@@ -1,55 +1,72 @@
-
-const { makeWASocket, useSingleFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys');
+const { makeWASocket, useSingleFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const TelegramBot = require('node-telegram-bot-api');
 const fs = require('fs');
 
-// === CONFIGURATION ===
 const TELEGRAM_BOT_TOKEN = 'TON_TELEGRAM_BOT_TOKEN'; // Remplace par ton token Telegram
-const SESSION_FILE = './auth_info.json';
+const bot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
 
-const { state, saveState } = useSingleFileAuthState(SESSION_FILE);
-const telegramBot = new TelegramBot(TELEGRAM_BOT_TOKEN, { polling: true });
+const { state, saveState } = useSingleFileAuthState('./session.json');
+let sock = null;
+let currentChatId = null;
 
-let userChatId = null;
-
-telegramBot.onText(/\/start/, (msg) => {
-    userChatId = msg.chat.id;
-    telegramBot.sendMessage(userChatId, 'Bienvenue ! Envoie le code de jumelage WhatsApp (8 chiffres) :');
-});
-
-telegramBot.on('message', async (msg) => {
-    const pairingCode = msg.text?.trim();
-    if (!/^[0-9]{8}$/.test(pairingCode)) return;
-
-    telegramBot.sendMessage(msg.chat.id, 'Connexion à WhatsApp en cours, patiente...');
-
-    const { version } = await fetchLatestBaileysVersion();
-    const sock = makeWASocket({
-        version,
-        auth: state,
-        printQRInTerminal: false,
-        browser: ['INCONNU-XD', 'Chrome', '1.0.0']
-    });
-
+async function connectWithPairingCode(pairingCode, chatId) {
     try {
-        await sock.ev.once('connection.update', (update) => {
-            const { connection, lastDisconnect } = update;
+        const { version } = await fetchLatestBaileysVersion();
+        sock = makeWASocket({
+            version,
+            auth: state,
+            browser: ['INCONNU-XD', 'Chrome', '1.0'],
+            printQRInTerminal: false
+        });
+
+        sock.ev.on('connection.update', (update) => {
+            const { connection } = update;
             if (connection === 'open') {
-                telegramBot.sendMessage(userChatId, '✅ Bot connecté à WhatsApp avec succès !');
+                bot.sendMessage(chatId, '✅ Connecté avec succès à WhatsApp !');
+                bot.sendMessage(chatId, `ℹ️ Numéro connecté : ${sock.user.id}`);
+                require('./index.js')(sock); // Chargement des commandes WhatsApp
             } else if (connection === 'close') {
-                const reason = lastDisconnect?.error?.output?.statusCode;
-                if (reason === DisconnectReason.loggedOut) {
-                    telegramBot.sendMessage(userChatId, 'Déconnecté de WhatsApp.');
-                }
+                bot.sendMessage(chatId, '❌ Déconnecté de WhatsApp.');
             }
         });
 
-        await sock.ev.emit('creds.update');
+        sock.ev.on('creds.update', saveState);
+        currentChatId = chatId;
+
         await sock.ws.send(JSON.stringify({
             method: 'pair-device',
             pairingCode
         }));
-    } catch (err) {
-        telegramBot.sendMessage(userChatId, 'Erreur pendant la connexion : ' + err.message);
+    } catch (error) {
+        bot.sendMessage(chatId, `Erreur : ${error.message}`);
     }
+}
+
+bot.onText(/\/pair (\d{8})/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const pairingCode = match[1];
+    bot.sendMessage(chatId, `⏳ Connexion avec le code ${pairingCode}...`);
+    await connectWithPairingCode(pairingCode, chatId);
+});
+
+bot.onText(/\/disconnect/, (msg) => {
+    if (sock) {
+        sock.logout();
+        bot.sendMessage(msg.chat.id, '🔌 Bot déconnecté de WhatsApp.');
+    } else {
+        bot.sendMessage(msg.chat.id, 'Bot non connecté.');
+    }
+});
+
+bot.onText(/\/restart/, (msg) => {
+    bot.sendMessage(msg.chat.id, '♻️ Redémarrage du bot...');
+    process.exit(0);
+});
+
+bot.onText(/\/start/, (msg) => {
+    bot.sendMessage(msg.chat.id, `Bienvenue dans INCONNU-XD V2 !
+Commandes disponibles :
+/pair 12345678 – Connexion WhatsApp
+/disconnect – Déconnexion
+/restart – Redémarrer`);
 });
